@@ -25,13 +25,16 @@ executable hs-websockets-workshop
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
-    -- other-modules:
+    other-modules: Session
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
-    build-depends:    base ^>=4.14.3.0
+    build-depends:    base
                     , websockets
                     , text
                     , stm
+                    , unordered-containers
+                    , random
+                    , hashable
     hs-source-dirs:   app
     default-language: Haskell2010
