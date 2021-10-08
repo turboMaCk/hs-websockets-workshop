@@ -18,5 +18,5 @@ newtype Session = Session {unSession :: Text}
 
 mkSession :: IO Session
 mkSession =
-    (Session . Text.pack)
+    Session . Text.pack
         <$> replicateM 32 (Rand.randomRIO ('0', 'z'))
