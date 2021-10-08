@@ -1,0 +1,113 @@
+<!doctype html>
+<head>
+  <title>Haskell Websockets</title>
+</head>
+<body>
+  <div id="message-list"></div>
+  <form id="message">
+    <textarea id="message-text"></textarea>
+    <button type="submit">Send</button>
+  </form>
+  <script>
+
+    let token = localStorage.getItem("token");
+    let name;
+
+    if (!token) {
+        name = prompt("Please enter your name", "Jane Doe");
+        if (!name) throw("not a name");
+    }
+
+    const wsUrl = location.protocol === "file:" ? "ws://127.0.0.1:4000" : `ws://${location.host}/stream`
+
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = function(e) {
+        console.log("[open] Connection established");
+        console.log("Sending to server");
+        let firstMessage;
+
+        if (token) {
+            firstMessage = {
+                tag: "JoinToken",
+                joinToken: token
+            };
+        } else {
+            firstMessage = {
+                tag: "JoinNew",
+                joinName: name
+            };
+        }
+        ws.send(JSON.stringify(firstMessage));
+    };
+
+    const messages = document.getElementById("message-list");
+
+    function addMessage(obj) {
+        const div = document.createElement("div");
+        div.innerText = `${obj.messageUserName}: ${obj.messageText}`;
+        messages.append(div);
+    }
+
+    ws.onmessage = function(event) {
+        console.log(`[message] Data received from server: ${event.data}`);
+
+        const data = JSON.parse(event.data);
+
+        if (data === "SessionInvalid") {
+            localStorage.removeItem("token");
+            return location.reload();
+        }
+
+        if (data === "MessageInvalid") {
+            return alert("Communication Error");
+        }
+
+        if (data.tag === "SessionCreated") {
+            token = data.newToken;
+            localStorage.setItem("token", token);
+            return console.debug("Token stored", token);
+        }
+
+        if (data.tag === "SyncMessages") {
+            return data.syncMessages.reverse().forEach(addMessage);
+        }
+
+        addMessage(data);
+    };
+
+    ws.onclose = function(event) {
+        if (event.wasClean) {
+            console.log(`[close] Connection closed cleanly, code=${event.code} reason=${event.reason}`);
+        } else {
+            // e.g. server process killed or network down
+            // event.code is usually 1006 in this case
+            console.log('[close] Connection died');
+        }
+    };
+
+    ws.onerror = function(error) {
+        console.log(`[error] ${error.message}`);
+    };
+
+    const form = document.getElementById("message");
+    const textarea = document.getElementById("message-text");
+
+    function sendMessage() {
+        ws.send(JSON.stringify(textarea.value));
+        textarea.value = "";
+    }
+
+    form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        sendMessage();
+    });
+
+    textarea.addEventListener("keyup", (event) => {
+        if (event.keyCode === 13 && event.ctrlKey) {
+            event.preventDefault();
+            sendMessage();
+        }
+    });
+  </script>
+</body>

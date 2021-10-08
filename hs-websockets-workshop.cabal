@@ -1,0 +1,43 @@
+cabal-version:      2.4
+name:               hs-websockets-workshop
+version:            0.1.0.0
+
+-- A short (one-line) description of the package.
+-- synopsis:
+
+-- A longer description of the package.
+-- description:
+
+-- A URL where users can report bugs.
+-- bug-reports:
+
+-- The license under which the package is released.
+-- license:
+author:             Marek Fajkus
+maintainer:         marek.faj@gmail.com
+
+-- A copyright notice.
+-- copyright:
+-- category:
+extra-source-files: CHANGELOG.md
+
+executable hs-websockets-workshop
+    main-is:          Main.hs
+
+    -- Modules included in this executable, other than Main.
+    other-modules: Session
+                 , Connection
+                 , State
+
+    -- LANGUAGE extensions used by modules in this package.
+    -- other-extensions:
+    build-depends:    base
+                    , websockets
+                    , text
+                    , stm
+                    , unordered-containers
+                    , random
+                    , hashable
+                    , aeson
+    hs-source-dirs:   app
+    default-language: Haskell2010
