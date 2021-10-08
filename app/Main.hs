@@ -47,7 +47,11 @@ data State = State
 
 renderList :: Show a => [a] -> Text
 renderList xs =
-    "[" <> Text.pack $ concat $ intersperse "," (show <$> xs) <> "]"
+    "[" <> (Text.pack $ concat $ intersperse "," (show <$> xs)) <> "]"
+
+getConnections :: State -> [WS.Connection]
+getConnections State{..} =
+    concat $ userConnections <$> stateUsers
 
 emptyState :: State
 emptyState =
@@ -98,9 +102,21 @@ app state pending = do
         State{..} <- STM.readTVarIO state
         -- send history
         WS.sendTextData conn $ renderList stateMessages
-        handler state conn
+        handler state User{..} conn
 
-handler :: TVar State -> WS.Connection -> IO ()
-handler state conn = forever $ do
-    msg <- WS.receiveData @Text conn
-    WS.sendTextData conn msg
+handler :: TVar State -> User -> WS.Connection -> IO ()
+handler state User{..} conn = forever $ do
+    messageText <- WS.receiveData @Text conn
+    let messageUserName = userName
+    broadcast Message{..} state
+
+broadcast :: Message -> TVar State -> IO ()
+broadcast message state = do
+    connections <- STM.atomically $ do
+        s@State{..} <- STM.readTVar state
+        STM.swapTVar state $ s{stateMessages = message : stateMessages}
+
+        pure $ getConnections s
+
+    forM_ connections $ \conn ->
+        WS.sendTextData conn $ Text.pack $ show message
