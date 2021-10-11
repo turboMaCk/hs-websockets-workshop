@@ -1,5 +1,4 @@
 {-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -23,9 +22,9 @@ import Connection (Connection)
 import Session (Session (..))
 import State (Message (..), State (..), User (..))
 
-import qualified Connection as Connection
+import qualified Connection
+import qualified State
 import qualified Session
-import qualified State as State
 
 main :: IO ()
 main =
@@ -37,32 +36,15 @@ data Error
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
-addUser :: Text -> WS.Connection -> TVar State -> IO (Session, Connection, User)
-addUser userName conn state = do
-    session <- Session.mkSession
-    putStrLn $ "Generated new Session " <> show session
-
-    STM.atomically $
-        let connection = Connection.mkConnection conn []
-            userConnections = [connection]
-         in do
-                STM.modifyTVar' state $ \s@State{..} ->
-                    s{stateUsers = HashMap.insert session User{..} stateUsers}
-                pure (session, connection, User{..})
-
 addConnection :: Session -> WS.Connection -> TVar State -> IO (Maybe (Connection, User))
 addConnection session conn state =
     STM.atomically $ do
-        s@State{..} <- STM.readTVar state
-        let mUser = HashMap.lookup session stateUsers
-        case mUser of
-            Just user -> do
-                let (newConnection, updatedUser) = State.userAddConnection conn user
-                void $ STM.swapTVar state $
-                    s{stateUsers = HashMap.insert session updatedUser stateUsers}
-                pure $ Just (newConnection, updatedUser)
-            Nothing ->
-                pure Nothing
+        s <- STM.readTVar state
+        case State.addConnection conn session s of
+            Just (connection, user, newState) -> do
+                void $ STM.swapTVar state newState
+                pure $ Just (connection, user)
+            Nothing -> pure Nothing
 
 app :: TVar State -> WS.ServerApp
 app state pending = do
@@ -77,7 +59,7 @@ app state pending = do
             case Text.stripPrefix "token:" txt of
                 -- handle existing session
                 Just token -> do
-                    existing <- addConnection (Session $ token) conn state
+                    existing <- addConnection (Session token) conn state
                     case existing of
                         Nothing -> do
                             putStrLn $ "Unknown session " <> show txt
@@ -86,7 +68,14 @@ app state pending = do
                         Just (connection, u) -> pure (Session token, connection, u)
                 -- handle new user
                 Nothing -> do
-                    (session, connection, user) <- addUser txt conn state
+                    (session, connection, user) <- do
+                        session <- Session.mkSession
+                        STM.atomically $ do
+                            s <- STM.readTVar state
+                            let (connection, user, newState) = State.addUser conn session txt s
+                            STM.swapTVar state newState
+                            pure (session, connection, user)
+
                     putStrLn "Created new session"
                     WS.sendTextData conn $ Session.toText session
                     pure (session, connection, user)
@@ -108,8 +97,7 @@ handler state session User{..} connection = flip finally disconnect $
   where
     disconnect = do
         STM.atomically $ do
-            STM.modifyTVar' state $ \s@State{..} ->
-                s{stateUsers = HashMap.update (Just . (State.userRemoveConnection connection)) session stateUsers}
+            STM.modifyTVar' state $ State.removeConnection session connection
 
 broadcast :: Message -> TVar State -> IO ()
 broadcast message state = do

@@ -7,10 +7,11 @@ module State (
     User (..),
     Message (..),
     State (..),
-    userAddConnection,
-    userRemoveConnection,
+    addConnection,
+    removeConnection,
     getAllConnections,
     emptyState,
+    addUser,
 ) where
 
 import Data.Aeson (FromJSON, ToJSON)
@@ -57,3 +58,27 @@ emptyState =
 getAllConnections :: State -> [Connection]
 getAllConnections State{..} =
     concat $ userConnections <$> stateUsers
+
+addConnection :: WS.Connection -> Session -> State -> Maybe (Connection, User, State)
+addConnection conn session state@State{..} = addConn <$> HashMap.lookup session stateUsers
+  where
+    addConn user =
+        let (connection, updatedUser) = userAddConnection conn user
+         in ( connection
+            , updatedUser
+            , state{stateUsers = HashMap.insert session updatedUser stateUsers}
+            )
+
+removeConnection :: Session -> Connection -> State -> State
+removeConnection session connection state@State{..} =
+    state{stateUsers = HashMap.update (Just . userRemoveConnection connection) session stateUsers}
+
+addUser :: WS.Connection -> Session -> Text -> State -> (Connection, User, State)
+addUser conn session userName state@State{..} =
+    ( connection
+    , User{..}
+    , state{stateUsers = HashMap.insert session User{..} stateUsers}
+    )
+  where
+    connection = Connection.mkConnection conn []
+    userConnections = [connection]
