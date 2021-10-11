@@ -8,7 +8,7 @@
 
 module Main where
 
-import Control.Concurrent.STM (TVar)
+import Control.Concurrent.STM (STM, TVar)
 import Control.Exception (Exception, finally, handle, throwIO)
 import Control.Monad
 import Data.Aeson (FromJSON, ToJSON)
@@ -45,8 +45,8 @@ data Error
     deriving stock (Show, Eq, Generic)
     deriving anyclass (Exception, FromJSON, ToJSON)
 
-addConnection :: Session -> WS.Connection -> TVar State -> IO (Maybe (Connection, User))
-addConnection session conn state = STM.atomically $ do
+addConnection :: Session -> WS.Connection -> TVar State -> STM (Maybe (Connection, User))
+addConnection session conn state = do
     s <- STM.readTVar state
     case State.addConnection conn session s of
         Nothing -> do
@@ -55,26 +55,29 @@ addConnection session conn state = STM.atomically $ do
             void $ STM.swapTVar state newState
             pure $ Just (connection, user)
 
+addUser :: Session -> WS.Connection -> Text -> TVar State -> STM (Connection, User)
+addUser session conn joinName state = do
+    s <- STM.readTVar state
+    let (connection, user, newState) = State.addUser conn session joinName s
+    void $ STM.swapTVar state newState
+    pure (connection, user)
+
 joinApp :: TVar State -> WS.Connection -> IO (Session, Connection, User)
 joinApp state conn = do
     msg <- Connection.acceptData conn
     putStrLn "join request"
-
     case msg of
         Nothing -> throwIO MessageInvalid
         Just JoinToken{..} -> do
-            existing <- addConnection joinToken conn state
+            existing <- STM.atomically $ addConnection joinToken conn state
             case existing of
                 Nothing -> throwIO SessionInvalid
-                Just (connection, u) -> pure (joinToken, connection, u)
+                Just (connection, user) -> pure (joinToken, connection, user)
         Just JoinNew{..} -> do
             session <- Session.mkSession
             Connection.sendSocket conn session
-            STM.atomically $ do
-                s <- STM.readTVar state
-                let (connection, user, newState) = State.addUser conn session joinName s
-                void $ STM.swapTVar state newState
-                pure (session, connection, user)
+            (connection, user) <- STM.atomically $ addUser session conn joinName state
+            pure (session, connection, user)
 
 errHandler :: WS.Connection -> Error -> IO ()
 errHandler conn err = do
