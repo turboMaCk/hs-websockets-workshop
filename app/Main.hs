@@ -31,7 +31,7 @@ import qualified State
 main :: IO ()
 main =
     STM.newTVarIO State.emptyState
-        >>= (WS.runServer "127.0.0.1" 3000 . app)
+        >>= (WS.runServer "127.0.0.1" 4000 . app)
 
 data Join
     = JoinToken {joinToken :: Session}

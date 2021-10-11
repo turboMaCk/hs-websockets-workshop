@@ -18,7 +18,9 @@
         if (!name) throw("not a name");
     }
 
-    const ws = new WebSocket("ws://127.0.0.1:3000");
+    const wsUrl = location.protocol === "file:" ? "ws://127.0.0.1:4000" : `ws://${location.host}/stream`
+
+    const ws = new WebSocket(wsUrl);
 
     ws.onopen = function(e) {
         console.log("[open] Connection established");
