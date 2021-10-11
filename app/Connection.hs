@@ -3,6 +3,7 @@
 module Connection (
     Connection,
     mkConnection,
+    acceptData,
     receiveData,
     sendData,
 ) where
@@ -30,3 +31,7 @@ sendData Connection{..} =
 receiveData :: FromJSON a => Connection -> IO (Maybe a)
 receiveData Connection{..} =
     decode <$> WS.receiveData connectionSocket
+
+acceptData :: FromJSON a => WS.Connection -> IO (Maybe a)
+acceptData conn =
+    decode <$> WS.receiveData conn

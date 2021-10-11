@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -6,10 +7,12 @@
 
 module Main where
 
-import Control.Concurrent.STM (TVar)
+import Control.Concurrent.STM (STM, TVar)
 import Control.Exception (Exception, finally, throwIO)
 import Control.Monad
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Text (Text)
+import GHC.Generics
 
 import qualified Control.Concurrent.STM as STM
 import qualified Data.HashMap.Strict as HashMap
@@ -23,62 +26,59 @@ import Session (Session (..))
 import State (Message (..), State (..), User (..))
 
 import qualified Connection
-import qualified State
 import qualified Session
+import qualified State
 
 main :: IO ()
 main =
     STM.newTVarIO State.emptyState
         >>= (WS.runServer "127.0.0.1" 3000 . app)
 
+data Join
+    = JoinToken {joinToken :: Session}
+    | JoinNew {joinName :: Text}
+    deriving stock (Generic)
+    deriving anyclass (FromJSON, ToJSON)
+
 data Error
     = SessionInvalid
+    | MessageInvalid
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
 addConnection :: Session -> WS.Connection -> TVar State -> IO (Maybe (Connection, User))
-addConnection session conn state =
-    STM.atomically $ do
-        s <- STM.readTVar state
-        case State.addConnection conn session s of
-            Just (connection, user, newState) -> do
+addConnection session conn state = STM.atomically $ do
+    s <- STM.readTVar state
+    case State.addConnection conn session s of
+        Nothing -> pure Nothing
+        Just (connection, user, newState) -> do
+            void $ STM.swapTVar state newState
+            pure $ Just (connection, user)
+
+joinApp :: TVar State -> WS.Connection -> IO (Session, Connection, User)
+joinApp state conn = do
+    msg <- Connection.acceptData conn
+    case msg of
+        Nothing -> throwIO MessageInvalid
+        Just JoinToken{..} -> do
+            existing <- addConnection joinToken conn state
+            case existing of
+                Nothing -> throwIO SessionInvalid
+                Just (connection, u) -> pure (joinToken, connection, u)
+        Just JoinNew{..} -> do
+            session <- Session.mkSession
+            STM.atomically $ do
+                s <- STM.readTVar state
+                let (connection, user, newState) = State.addUser conn session joinName s
                 void $ STM.swapTVar state newState
-                pure $ Just (connection, user)
-            Nothing -> pure Nothing
+                pure (session, connection, user)
 
 app :: TVar State -> WS.ServerApp
 app state pending = do
     conn <- WS.acceptRequest pending
-
-    putStrLn "Accepted new connection"
-
     WS.withPingThread conn 30 (pure ()) $ do
         -- handle existing session or create new user
-        txt <- WS.receiveData @Text conn
-        (session, connection, User{..}) <-
-            case Text.stripPrefix "token:" txt of
-                -- handle existing session
-                Just token -> do
-                    existing <- addConnection (Session token) conn state
-                    case existing of
-                        Nothing -> do
-                            putStrLn $ "Unknown session " <> show txt
-                            WS.sendClose @Text conn "Invalid token"
-                            throwIO SessionInvalid
-                        Just (connection, u) -> pure (Session token, connection, u)
-                -- handle new user
-                Nothing -> do
-                    (session, connection, user) <- do
-                        session <- Session.mkSession
-                        STM.atomically $ do
-                            s <- STM.readTVar state
-                            let (connection, user, newState) = State.addUser conn session txt s
-                            STM.swapTVar state newState
-                            pure (session, connection, user)
-
-                    putStrLn "Created new session"
-                    WS.sendTextData conn $ Session.toText session
-                    pure (session, connection, user)
+        (session, connection, User{..}) <- joinApp state conn
         putStrLn $ "User connected " <> show userName
 
         -- send history
