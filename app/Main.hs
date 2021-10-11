@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -6,11 +7,9 @@
 
 module Main where
 
-import Control.Concurrent.STM (STM, TVar)
+import Control.Concurrent.STM (TVar)
 import Control.Exception (Exception, finally, throwIO)
 import Control.Monad
-import Data.HashMap.Strict (HashMap)
-import Data.List (intersperse)
 import Data.Text (Text)
 
 import qualified Control.Concurrent.STM as STM
@@ -20,66 +19,18 @@ import qualified Network.WebSockets as WS
 
 -- Local modules
 
+import Connection (Connection)
 import Session (Session (..))
+import State (Message (..), State (..), User (..))
 
+import qualified Connection as Connection
 import qualified Session
+import qualified State as State
 
 main :: IO ()
 main =
-    STM.newTVarIO emptyState
+    STM.newTVarIO State.emptyState
         >>= (WS.runServer "127.0.0.1" 3000 . app)
-
-data Connection = Connection
-    { connectionSocket :: !WS.Connection
-    , connectionId :: !Int
-    }
-
-instance Eq Connection where
-    c1 == c2 = connectionId c1 == connectionId c2
-
-data User = User
-    { userName :: !Text
-    , userConnections :: ![Connection]
-    }
-
-addConn :: WS.Connection -> User -> (Connection, User)
-addConn conn user =
-    let connection = Connection conn (length (userConnections user))
-     in (connection, user{userConnections = connection : userConnections user})
-
-removeConn :: Connection -> User -> User
-removeConn conn user =
-    user { userConnections = filter (conn /=) $ userConnections user }
-
-data Message = Message
-    { messageUserName :: !Text
-    , messageText :: !Text
-    }
-
-render :: Message -> Text
-render Message{..} =
-    messageUserName <> ": " <> messageText
-
-renderList :: [Message] -> Text
-renderList xs =
-    "[\"" <> (Text.concat $ intersperse "\",\"" (render <$> xs)) <> "\"]"
-
-instance Show Message where
-    show Message{..} =
-        show messageUserName <> ": " <> show messageText
-
-data State = State
-    { stateUsers :: !(HashMap Session User)
-    , stateMessages :: ![Message]
-    }
-
-getConnections :: State -> [WS.Connection]
-getConnections State{..} =
-    fmap connectionSocket $ concat $ userConnections <$> stateUsers
-
-emptyState :: State
-emptyState =
-    State HashMap.empty []
 
 data Error
     = SessionInvalid
@@ -92,7 +43,7 @@ addUser userName conn state = do
     putStrLn $ "Generated new Session " <> show session
 
     STM.atomically $
-        let connection = Connection conn 0
+        let connection = Connection.mkConnection conn []
             userConnections = [connection]
          in do
                 STM.modifyTVar' state $ \s@State{..} ->
@@ -106,8 +57,8 @@ addConnection session conn state =
         let mUser = HashMap.lookup session stateUsers
         case mUser of
             Just user -> do
-                let (newConnection, updatedUser) = addConn conn user
-                STM.swapTVar state $
+                let (newConnection, updatedUser) = State.userAddConnection conn user
+                void $ STM.swapTVar state $
                     s{stateUsers = HashMap.insert session updatedUser stateUsers}
                 pure $ Just (newConnection, updatedUser)
             Nothing ->
@@ -143,30 +94,30 @@ app state pending = do
 
         -- send history
         State{..} <- STM.readTVarIO state
-        WS.sendTextData conn $ renderList stateMessages
+        Connection.sendData connection stateMessages
 
         -- chat handler
         handler state session User{..} connection
 
 handler :: TVar State -> Session -> User -> Connection -> IO ()
-handler state session User{..} Connection{..} = flip finally disconnect $
+handler state session User{..} connection = flip finally disconnect $
     forever $ do
-        messageText <- WS.receiveData @Text connectionSocket
+        Just messageText <- Connection.receiveData @Text connection
         let messageUserName = userName
         broadcast Message{..} state
   where
     disconnect = do
         STM.atomically $ do
             STM.modifyTVar' state $ \s@State{..} ->
-                s{stateUsers = HashMap.update (Just . (removeConn Connection{..})) session stateUsers}
+                s{stateUsers = HashMap.update (Just . (State.userRemoveConnection connection)) session stateUsers}
 
 broadcast :: Message -> TVar State -> IO ()
 broadcast message state = do
     connections <- STM.atomically $ do
         s@State{..} <- STM.readTVar state
-        STM.swapTVar state $ s{stateMessages = message : stateMessages}
+        void $ STM.swapTVar state $ s{stateMessages = message : stateMessages}
 
-        pure $ getConnections s
+        pure $ State.getAllConnections s
 
     forM_ connections $ \conn ->
-        WS.sendTextData conn $ render message
+        Connection.sendData conn message

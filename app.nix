@@ -1,4 +1,4 @@
-{ mkDerivation, base, hashable, lib, random, stm, text
+{ mkDerivation, aeson, base, hashable, lib, random, stm, text
 , unordered-containers, websockets
 }:
 mkDerivation {
@@ -8,7 +8,7 @@ mkDerivation {
   isLibrary = false;
   isExecutable = true;
   executableHaskellDepends = [
-    base hashable random stm text unordered-containers websockets
+    aeson base hashable random stm text unordered-containers websockets
   ];
   license = "unknown";
   hydraPlatforms = lib.platforms.none;
