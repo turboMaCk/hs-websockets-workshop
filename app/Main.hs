@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -9,7 +8,7 @@
 
 module Main where
 
-import Control.Concurrent.STM (STM, TVar)
+import Control.Concurrent.STM (TVar)
 import Control.Exception (Exception, finally, handle, throwIO)
 import Control.Monad
 import Data.Aeson (FromJSON, ToJSON)
@@ -17,8 +16,6 @@ import Data.Text (Text)
 import GHC.Generics
 
 import qualified Control.Concurrent.STM as STM
-import qualified Data.HashMap.Strict as HashMap
-import qualified Data.Text as Text
 import qualified Network.WebSockets as WS
 
 -- Local modules
@@ -72,14 +69,12 @@ joinApp state conn = do
                 Just (connection, u) -> pure (joinToken, connection, u)
         Just JoinNew{..} -> do
             session <- Session.mkSession
-            (session, connection, user) <- STM.atomically $ do
+            Connection.sendSocket conn session
+            STM.atomically $ do
                 s <- STM.readTVar state
                 let (connection, user, newState) = State.addUser conn session joinName s
                 void $ STM.swapTVar state newState
                 pure (session, connection, user)
-
-            Connection.sendData connection session
-            pure (session, connection, user)
 
 errHandler :: WS.Connection -> Error -> IO ()
 errHandler conn err = do
@@ -112,7 +107,7 @@ handler state session User{..} connection = flip finally disconnect $
                 let messageUserName = userName
                  in broadcast Message{..} state
             Nothing -> do
-                putStrLn $ "Can't parse messageText"
+                putStrLn "Can't parse messageText"
   where
     disconnect = do
         putStrLn $ "disconnecting " <> show userName
