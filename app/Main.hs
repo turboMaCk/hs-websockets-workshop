@@ -87,8 +87,7 @@ addConnection :: Session -> WS.Connection -> TVar State -> STM (Maybe (Connectio
 addConnection session conn state = do
     s <- STM.readTVar state
     case State.addConnection conn session s of
-        Nothing -> do
-            pure Nothing
+        Nothing -> pure Nothing
         Just (connection, user, newState) -> do
             void $ STM.swapTVar state newState
             pure $ Just (connection, user)
@@ -147,12 +146,11 @@ handler state session User{..} connection = flip finally disconnect $
             Just messageText ->
                 let messageUserName = userName
                  in broadcast Message{..} state
-            Nothing -> do
-                putStrLn "Can't parse messageText"
+            Nothing -> putStrLn "Can't parse messageText"
   where
     disconnect = do
         putStrLn $ "disconnecting " <> show userName
-        STM.atomically $ do
+        STM.atomically $
             STM.modifyTVar' state $ State.removeConnection session connection
 
 broadcast :: Message -> TVar State -> IO ()
@@ -160,7 +158,6 @@ broadcast message state = do
     connections <- STM.atomically $ do
         s@State{..} <- STM.readTVar state
         void $ STM.swapTVar state $ s{stateMessages = message : stateMessages}
-
         pure $ State.getAllConnections s
 
     forM_ connections $ \conn ->
