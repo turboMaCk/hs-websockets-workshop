@@ -42,7 +42,6 @@
     };
 
     const messages = document.getElementById("message-list");
-    let gotMessages = false;
 
     function addMessage(obj) {
         const div = document.createElement("div");
@@ -64,19 +63,17 @@
             return alert("Communication Error");
         }
 
-        // handle fist message which contains session token
-        if (!token) {
-            token = data;
+        if (data.tag === "SessionCreated") {
+            token = data.newToken;
             localStorage.setItem("token", token);
-            console.debug("Token stored", token)
-        } else {
-            if (gotMessages) {
-                addMessage(data);
-            } else {
-                data.reverse().forEach(addMessage);
-                gotMessages = true;
-            }
+            return console.debug("Token stored", token);
         }
+
+        if (data.tag === "SyncMessages") {
+            return data.syncMessages.reverse().forEach(addMessage);
+        }
+
+        addMessage(data);
     };
 
     ws.onclose = function(event) {

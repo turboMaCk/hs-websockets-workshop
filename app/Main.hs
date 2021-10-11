@@ -28,6 +28,38 @@ import qualified Connection
 import qualified Session
 import qualified State
 
+{- |
+
+Steps:
+------
+1. Implement simple echo service
+    - use Message type mock for compatibility
+2. Add handling for Users and Connections (Join message)
+    - use SessionCreated for sending token
+3. Implement handling of Error
+4. Implement broadcast and message sending (real state)
+5. Implement disconnect
+6. add SyncMessages to sync state
+
+Front-end communication flow:
+-----------------------------
+- accept connection
+- start ping thread
+- read data @Join
+   - can fail with MessageInvalid
+   - JoinToken can fail with SessionInvalid
+   - JoinNew should send SessionCreated back right away
+- Send [Message]
+- start forever handler receive @Text (messageText) -> broadcast @Message
+
+Exception handling:
+-------------------
+- handle Error exception after accepting connection
+- after storing connection to State handle disconnect using finally
+
+Types needed for implementation (compatibility with front-end code):
+--------------------------------------------------------------------
+-}
 main :: IO ()
 main =
     STM.newTVarIO State.emptyState
@@ -44,6 +76,12 @@ data Error
     | MessageInvalid
     deriving stock (Show, Eq, Generic)
     deriving anyclass (Exception, FromJSON, ToJSON)
+
+data Event
+    = SessionCreated {newToken :: Session}
+    | SyncMessages {syncMessages :: [Message]}
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (FromJSON, ToJSON)
 
 addConnection :: Session -> WS.Connection -> TVar State -> STM (Maybe (Connection, User))
 addConnection session conn state = do
@@ -75,7 +113,7 @@ joinApp state conn = do
                 Just (connection, user) -> pure (joinToken, connection, user)
         Just JoinNew{..} -> do
             session <- Session.mkSession
-            Connection.sendSocket conn session
+            Connection.sendSocket conn $ SessionCreated session
             (connection, user) <- STM.atomically $ addUser session conn joinName state
             pure (session, connection, user)
 
@@ -96,7 +134,7 @@ app state pending = do
 
             -- send history
             State{..} <- STM.readTVarIO state
-            Connection.sendData connection stateMessages
+            Connection.sendData connection $ SyncMessages stateMessages
 
             -- chat handler
             handler state session User{..} connection
