@@ -23,32 +23,55 @@
     ws.onopen = function(e) {
         console.log("[open] Connection established");
         console.log("Sending to server");
-        const firstMessage = token ? `token:${token}` : name;
-        ws.send(firstMessage);
+        let firstMessage;
+
+        if (token) {
+            firstMessage = {
+                tag: "JoinToken",
+                joinToken: token
+            };
+        } else {
+            firstMessage = {
+                tag: "JoinNew",
+                joinName: name
+            };
+        }
+        ws.send(JSON.stringify(firstMessage));
     };
 
     const messages = document.getElementById("message-list");
     let gotMessages = false;
 
-    function addMessage(data) {
+    function addMessage(obj) {
         const div = document.createElement("div");
-        div.innerText = data;
+        div.innerText = `${obj.messageUserName}: ${obj.messageText}`;
         messages.append(div);
     }
 
     ws.onmessage = function(event) {
         console.log(`[message] Data received from server: ${event.data}`);
 
+        const data = JSON.parse(event.data);
+
+        if (data === "SessionInvalid") {
+            localStorage.removeItem("token");
+            return location.reload();
+        }
+
+        if (data === "MessageInvalid") {
+            return alert("Communication Error");
+        }
+
         // handle fist message which contains session token
         if (!token) {
-            token = event.data;
+            token = data;
             localStorage.setItem("token", token);
-            console.debug("Token stored")
+            console.debug("Token stored", token)
         } else {
             if (gotMessages) {
-                addMessage(event.data);
+                addMessage(data);
             } else {
-                JSON.parse(event.data).reverse().forEach(addMessage);
+                data.reverse().forEach(addMessage);
                 gotMessages = true;
             }
         }
@@ -57,10 +80,6 @@
     ws.onclose = function(event) {
         if (event.wasClean) {
             console.log(`[close] Connection closed cleanly, code=${event.code} reason=${event.reason}`);
-            if (event.reason === "Invalid token") {
-                localStorage.removeItem("token");
-                window.location.reload();
-            }
         } else {
             // e.g. server process killed or network down
             // event.code is usually 1006 in this case
@@ -76,17 +95,16 @@
     const textarea = document.getElementById("message-text");
 
     function sendMessage() {
-        ws.send(textarea.value)
+        ws.send(JSON.stringify(textarea.value));
         textarea.value = "";
     }
 
     form.addEventListener("submit", (event) => {
         event.preventDefault();
-        snedMessage();
+        sendMessage();
     });
 
     textarea.addEventListener("keyup", (event) => {
-        console.log(event.keyCode);
         if (event.keyCode === 13 && event.ctrlKey) {
             event.preventDefault();
             sendMessage();

@@ -1,14 +1,16 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Main where
 
 import Control.Concurrent.STM (STM, TVar)
-import Control.Exception (Exception, finally, throwIO)
+import Control.Exception (Exception, finally, handle, throwIO)
 import Control.Monad
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Text (Text)
@@ -43,14 +45,15 @@ data Join
 data Error
     = SessionInvalid
     | MessageInvalid
-    deriving stock (Show, Eq)
-    deriving anyclass (Exception)
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (Exception, FromJSON, ToJSON)
 
 addConnection :: Session -> WS.Connection -> TVar State -> IO (Maybe (Connection, User))
 addConnection session conn state = STM.atomically $ do
     s <- STM.readTVar state
     case State.addConnection conn session s of
-        Nothing -> pure Nothing
+        Nothing -> do
+            pure Nothing
         Just (connection, user, newState) -> do
             void $ STM.swapTVar state newState
             pure $ Just (connection, user)
@@ -58,6 +61,8 @@ addConnection session conn state = STM.atomically $ do
 joinApp :: TVar State -> WS.Connection -> IO (Session, Connection, User)
 joinApp state conn = do
     msg <- Connection.acceptData conn
+    putStrLn "join request"
+
     case msg of
         Nothing -> throwIO MessageInvalid
         Just JoinToken{..} -> do
@@ -67,35 +72,50 @@ joinApp state conn = do
                 Just (connection, u) -> pure (joinToken, connection, u)
         Just JoinNew{..} -> do
             session <- Session.mkSession
-            STM.atomically $ do
+            (session, connection, user) <- STM.atomically $ do
                 s <- STM.readTVar state
                 let (connection, user, newState) = State.addUser conn session joinName s
                 void $ STM.swapTVar state newState
                 pure (session, connection, user)
 
+            Connection.sendData connection session
+            pure (session, connection, user)
+
+errHandler :: WS.Connection -> Error -> IO ()
+errHandler conn err = do
+    putStrLn $ "Error occured " <> show err
+    Connection.sendSocket conn err
+
 app :: TVar State -> WS.ServerApp
 app state pending = do
     conn <- WS.acceptRequest pending
-    WS.withPingThread conn 30 (pure ()) $ do
-        -- handle existing session or create new user
-        (session, connection, User{..}) <- joinApp state conn
-        putStrLn $ "User connected " <> show userName
+    WS.withPingThread conn 30 (pure ()) $
+        handle (errHandler conn) $ do
+            -- handle existing session or create new user
+            (session, connection, User{..}) <- joinApp state conn
 
-        -- send history
-        State{..} <- STM.readTVarIO state
-        Connection.sendData connection stateMessages
+            putStrLn $ "User connected " <> show userName
 
-        -- chat handler
-        handler state session User{..} connection
+            -- send history
+            State{..} <- STM.readTVarIO state
+            Connection.sendData connection stateMessages
+
+            -- chat handler
+            handler state session User{..} connection
 
 handler :: TVar State -> Session -> User -> Connection -> IO ()
 handler state session User{..} connection = flip finally disconnect $
     forever $ do
-        Just messageText <- Connection.receiveData @Text connection
-        let messageUserName = userName
-        broadcast Message{..} state
+        msg <- Connection.receiveData @Text connection
+        case msg of
+            Just messageText ->
+                let messageUserName = userName
+                 in broadcast Message{..} state
+            Nothing -> do
+                putStrLn $ "Can't parse messageText"
   where
     disconnect = do
+        putStrLn $ "disconnecting " <> show userName
         STM.atomically $ do
             STM.modifyTVar' state $ State.removeConnection session connection
 

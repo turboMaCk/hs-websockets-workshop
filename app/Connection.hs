@@ -6,6 +6,7 @@ module Connection (
     acceptData,
     receiveData,
     sendData,
+    sendSocket,
 ) where
 
 import Data.Aeson (FromJSON, ToJSON, decode, encode)
@@ -23,6 +24,10 @@ mkConnection conn xs =
 
 instance Eq Connection where
     c1 == c2 = connectionId c1 == connectionId c2
+
+sendSocket :: ToJSON a => WS.Connection -> a -> IO ()
+sendSocket conn =
+    WS.sendDataMessage conn . flip WS.Text Nothing . encode
 
 sendData :: ToJSON a => Connection -> a -> IO ()
 sendData Connection{..} =

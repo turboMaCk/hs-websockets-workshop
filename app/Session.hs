@@ -19,9 +19,8 @@ import qualified System.Random as Rand
 
 newtype Session = Session {unSession :: Text}
     deriving stock (Eq, Ord, Generic)
-    deriving newtype (Hashable)
+    deriving newtype (Hashable, FromJSON, ToJSON)
     deriving (Show) via Text
-    deriving anyclass (FromJSON, ToJSON)
 
 mkSession :: IO Session
 mkSession =
