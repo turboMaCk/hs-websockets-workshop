@@ -6,28 +6,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Main where
-
-import Control.Concurrent.STM (STM, TVar)
-import Control.Exception (Exception, finally, handle, throwIO)
-import Control.Monad
-import Data.Aeson (FromJSON, ToJSON)
-import Data.Text (Text)
-import GHC.Generics
-
-import qualified Control.Concurrent.STM as STM
-import qualified Network.WebSockets as WS
-
--- Local modules
-
-import Connection (Connection)
-import Session (Session (..))
-import State (Message (..), State (..), User (..))
-
-import qualified Connection
-import qualified Session
-import qualified State
-
 {- |
 
 Steps:
@@ -60,6 +38,28 @@ Exception handling:
 Types needed for implementation (compatibility with front-end code):
 --------------------------------------------------------------------
 -}
+module Main where
+
+import Control.Concurrent.STM (STM, TVar)
+import Control.Exception (Exception, finally, handle, throwIO)
+import Control.Monad
+import Data.Aeson (FromJSON, ToJSON)
+import Data.Text (Text)
+import GHC.Generics
+
+import qualified Control.Concurrent.STM as STM
+import qualified Network.WebSockets as WS
+
+-- Local modules
+
+import Connection (Connection)
+import Session (Session (..))
+import State (Message (..), State (..), User (..))
+
+import qualified Connection
+import qualified Session
+import qualified State
+
 main :: IO ()
 main =
     STM.newTVarIO State.emptyState
