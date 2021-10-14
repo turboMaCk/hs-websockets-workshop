@@ -136,5 +136,5 @@ joinApp conn state = do
 app :: TVar State -> WS.ServerApp
 app state pendingConn = do
     conn <- WS.acceptRequest pendingConn
-    WS.withPingThread conn 30 (pure ()) $ finally (clean) do
+    WS.withPingThread conn 30 (pure ()) $ do
         void $ joinApp conn state
