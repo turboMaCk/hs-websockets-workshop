@@ -79,5 +79,14 @@ import qualified State
 
 main :: IO ()
 main =
-    -- WS.runServer "127.0.0.1" 4000 . app
-    putStrLn "Hello world!"
+    WS.runServer "127.0.0.1" 4000 app
+
+
+app :: WS.ServerApp
+app pendingConn = do
+    conn <- WS.acceptRequest pendingConn
+    WS.withPingThread conn 30 (pure ()) $ forever $ do
+        msg <- Connection.acceptData @Text conn
+        case msg of
+          Just txt -> Connection.sendSocket conn $ Message "you" txt
+          Nothing -> putStrLn "I don't understand"
