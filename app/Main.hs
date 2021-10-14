@@ -79,14 +79,62 @@ import qualified State
 
 main :: IO ()
 main =
-    WS.runServer "127.0.0.1" 4000 app
+    STM.newTVarIO State.emptyState >>=
+        WS.runServer "127.0.0.1" 4000 . app
 
+data Join
+    = JoinToken {joinToken :: Session}
+    | JoinNew {joinName :: Text}
+    deriving stock (Generic)
+    deriving anyclass (FromJSON, ToJSON)
 
-app :: WS.ServerApp
-app pendingConn = do
+data Error
+    = SessionInvalid
+    | MessageInvalid
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (Exception, FromJSON, ToJSON)
+
+data Event
+    = SessionCreated {newToken :: Session}
+    | SyncMessages {syncMessages :: [Message]}
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (FromJSON, ToJSON)
+
+addConnection :: Session -> WS.Connection -> TVar State -> STM (Maybe (Connection, User))
+addConnection session conn state = do
+    s <- STM.readTVar state
+    case State.addConnection conn session s of
+        Nothing -> pure Nothing
+        Just (connection, user, newState) -> do
+            void $ STM.swapTVar state newState
+            pure $ Just (connection, user)
+
+addUser :: Session -> WS.Connection -> Text -> TVar State -> STM (Connection, User)
+addUser session conn joinName state = do
+    s <- STM.readTVar state
+    let (connection, user, newState) = State.addUser conn session joinName s
+    void $ STM.swapTVar state newState
+    pure (connection, user)
+
+joinApp :: WS.Connection -> TVar State -> IO (Session, Connection, User)
+joinApp conn state = do
+    msg <- Connection.acceptData conn
+    putStrLn "join request"
+    case msg of
+        Nothing -> throwIO MessageInvalid
+        Just JoinToken{..} -> do
+            existing <- STM.atomically $ addConnection joinToken conn state
+            case existing of
+                Nothing -> throwIO SessionInvalid
+                Just (connection, user) -> pure (joinToken, connection, user)
+        Just JoinNew{..} -> do
+            session <- Session.mkSession
+            Connection.sendSocket conn $ SessionCreated session
+            (connection, user) <- STM.atomically $ addUser session conn joinName state
+            pure (session, connection, user)
+
+app :: TVar State -> WS.ServerApp
+app state pendingConn = do
     conn <- WS.acceptRequest pendingConn
-    WS.withPingThread conn 30 (pure ()) $ forever $ do
-        msg <- Connection.acceptData @Text conn
-        case msg of
-          Just txt -> Connection.sendSocket conn $ Message "you" txt
-          Nothing -> putStrLn "I don't understand"
+    WS.withPingThread conn 30 (pure ()) $ finally (clean) do
+        void $ joinApp conn state
